@@ -1,0 +1,4 @@
+PyQt6
+gspread
+oauth2client
+pandas
