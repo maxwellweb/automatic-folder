@@ -172,3 +172,4 @@ cython_debug/
 build/*
 output/*
 credentials/credentials.json
+config/credentials/credentials.json
