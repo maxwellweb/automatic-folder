@@ -38,11 +38,11 @@ def load_ftp_config(file_path):
 
 
 class DownloadWorker(QObject):
-    progress = pyqtSignal(int, int)  # Señal para la barra de progreso
+    progress = pyqtSignal(int, int, str)  # Señal para la barra de progreso
     finished = pyqtSignal(str)  # Señal para indicar que la descarga ha terminado
     error = pyqtSignal(str)  # Señal para indicar un error durante la descarga
 
-    def __init__(self, ftp_config_path, remote_directory, local_directory):
+    def __init__(self, ftp_config, remote_directory, local_directory):
         """
         Constructor del worker para manejar descargas FTP.
 
@@ -54,7 +54,7 @@ class DownloadWorker(QObject):
         super().__init__()
         self.remote_directory = remote_directory
         self.local_directory = local_directory
-        self.ftp_config = load_ftp_config(ftp_config_path)  # Carga las credenciales
+        self.ftp_config = ftp_config  # Carga las credenciales
 
     def run(self):
         """
@@ -111,4 +111,4 @@ class DownloadWorker(QObject):
                 with open(local_path, "wb") as f:
                     ftp.retrbinary(f"RETR {remote_path}", f.write)
                 downloaded_files += 1
-                self.progress.emit(downloaded_files, total_items)
+                self.progress.emit(downloaded_files, total_items, item)
