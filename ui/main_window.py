@@ -74,6 +74,7 @@ class FolderManagerApp(QMainWindow):
     def setup_variables(self):
         """Inicializa las variables de estado."""
         config_path = get_file_path("credentials/ftp_config.json")
+        self.credential_path = get_file_path("credentials/credentials.json")
         self.config = load_config(config_path)
         self.google_sheet_url = self.config.get("google_sheet_url", None)
         self.ftp_config = self.config.get("ftp", {})
@@ -109,7 +110,7 @@ class FolderManagerApp(QMainWindow):
             self.validate_ftp_and_sheet_config()
 
             ftp = connect_ftp(self.ftp_config["host"], self.ftp_config["user"], self.ftp_config["password"])
-            self.sheet_data = load_excel_data(self.google_sheet_url, "credentials/credentials.json")
+            self.sheet_data = load_excel_data(self.google_sheet_url, self.credential_path)
 
             used, available = verificar_carpetas_ftp(ftp, self.ftp_config["base_path"], self.sheet_data, "Carpeta")
             close_ftp_connection(ftp)
@@ -190,7 +191,7 @@ class FolderManagerApp(QMainWindow):
 
     def download_finished(self, message, selected_row, selected_folder, editor):
         QMessageBox.information(self, "Descarga completa", message)
-        append_row_to_google_sheet(self.google_sheet_url, "credentials/credentials.json", [selected_folder, editor])
+        append_row_to_google_sheet(self.google_sheet_url, self.credential_path, [selected_folder, editor])
 
         self.available_table.removeRow(selected_row)
         row_position = self.used_table.rowCount()
