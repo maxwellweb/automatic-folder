@@ -19,7 +19,7 @@ class AnalyzeWorker(QThread):
         import os
         
         sheet_data = None  # Inicializa sheet_data como None
-        
+
         try:
             # Conexión al servidor FTP
             ftp = connect_ftp(self.ftp_config["host"], self.ftp_config["user"], self.ftp_config["password"])

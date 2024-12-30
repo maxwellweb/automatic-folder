@@ -1,45 +1,71 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLineEdit, QPushButton, QFormLayout, QMessageBox
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QLineEdit, QPushButton, QLabel, QGridLayout, QMessageBox
+)
+from PyQt6.QtCore import Qt
 
 
 class FTPConfigDialog(QDialog):
     def __init__(self, parent, config):
         super().__init__(parent)
         self.setWindowTitle("Configuración de FTP y Google Sheets")
-        self.setGeometry(200, 200, 400, 350)
+        self.setGeometry(200, 200, 500, 400)  # Tamaño inicial más amplio
 
-        self.config = config["ftp"]
+        self.config = config
 
         # Layout principal
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
 
-        # Formulario
-        form_layout = QFormLayout()
+        # Título
+        title_label = QLabel("Configura los detalles del servidor FTP y Google Sheets")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(title_label)
 
-        self.host_input = QLineEdit(self.config.get("host", ""))
-        self.user_input = QLineEdit(self.config.get("user", ""))
-        self.password_input = QLineEdit(self.config.get("password", ""))
+        # Formulario con GridLayout
+        form_layout = QGridLayout()
+
+        # Campos del formulario
+        self.host_input = QLineEdit(self.config.get("ftp", {}).get("host", ""))
+        self.user_input = QLineEdit(self.config.get("ftp", {}).get("user", ""))
+        self.password_input = QLineEdit(self.config.get("ftp", {}).get("password", ""))
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)  # Ocultar contraseña
-        self.base_path_input = QLineEdit(self.config.get("base_path", "/"))
-        self.sheet_url_input = QLineEdit(self.config.get("google_sheet_url", ""))
+        self.base_path_input = QLineEdit(self.config.get("ftp", {}).get("base_path", "/"))
+        self.sheet_url_input = QLineEdit(self.config.get("ftp", {}).get("google_sheet_url", ""))
 
-        form_layout.addRow("Host:", self.host_input)
-        form_layout.addRow("Usuario:", self.user_input)
-        form_layout.addRow("Contraseña:", self.password_input)
-        form_layout.addRow("Directorio Raíz:", self.base_path_input)
-        form_layout.addRow("URL de Google Sheets:", self.sheet_url_input)
+        # Etiquetas
+        form_layout.addWidget(QLabel("Host:"), 0, 0)
+        form_layout.addWidget(self.host_input, 0, 1)
 
-        layout.addLayout(form_layout)
+        form_layout.addWidget(QLabel("Usuario:"), 1, 0)
+        form_layout.addWidget(self.user_input, 1, 1)
+
+        form_layout.addWidget(QLabel("Contraseña:"), 2, 0)
+        form_layout.addWidget(self.password_input, 2, 1)
+
+        form_layout.addWidget(QLabel("Directorio Raíz:"), 3, 0)
+        form_layout.addWidget(self.base_path_input, 3, 1)
+
+        form_layout.addWidget(QLabel("URL de Google Sheets:"), 4, 0)
+        form_layout.addWidget(self.sheet_url_input, 4, 1)
+
+        # Ajustar proporciones de las columnas
+        form_layout.setColumnStretch(0, 1)
+        form_layout.setColumnStretch(1, 3)
+
+        main_layout.addLayout(form_layout)
 
         # Botones
+        button_layout = QVBoxLayout()
         self.save_btn = QPushButton("Guardar")
         self.save_btn.clicked.connect(self.save_config)
-        layout.addWidget(self.save_btn)
+        button_layout.addWidget(self.save_btn)
 
         self.cancel_btn = QPushButton("Cancelar")
         self.cancel_btn.clicked.connect(self.reject)
-        layout.addWidget(self.cancel_btn)
+        button_layout.addWidget(self.cancel_btn)
 
-        self.setLayout(layout)
+        main_layout.addLayout(button_layout)
+
+        self.setLayout(main_layout)
 
     def save_config(self):
         """
@@ -54,10 +80,12 @@ class FTPConfigDialog(QDialog):
         if not all([host, user, password, base_path, sheet_url]):
             QMessageBox.warning(self, "Error", "Todos los campos son obligatorios.")
             return
-        self.config["host"] = host
-        self.config["user"] = user
-        self.config["password"] = password
-        self.config["base_path"] = base_path
-        self.config["google_sheet_url"] = sheet_url
- 
+
+        self.config["ftp"] = {
+            "host": host,
+            "user": user,
+            "password": password,
+            "base_path": base_path,
+            "google_sheet_url": sheet_url,
+        }
         self.accept()

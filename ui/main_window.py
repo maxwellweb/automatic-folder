@@ -1,9 +1,10 @@
 import sys
 import os
-from PyQt6.QtCore import QThread, QTimer
+from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QMainWindow, QVBoxLayout, QPushButton, QLabel, QFileDialog, QWidget, QMessageBox, QTableWidget, QTableWidgetItem, QInputDialog, QProgressBar, QTabWidget
 )
+from data.folder_analysis import connect_ftp
 from ui.ftp_dialog import FTPConfigDialog
 from config.settings import *
 from config.utils import *
@@ -11,6 +12,29 @@ from ftp_config import load_config, save_config
 from data.google_sheets import update_row_in_google_sheet, load_excel_data
 from workers.download import DownloadWorker
 from workers.analyst_folder import AnalyzeWorker
+from workers.ftp import FTPConnectionThread
+
+class FTPConnectionThread(QThread):
+    connection_success = pyqtSignal()  # Señal para conexión exitosa
+    connection_error = pyqtSignal(str)  # Señal para error
+
+    def __init__(self, ftp_config):
+        super().__init__()
+        self.ftp_config = ftp_config
+
+    def run(self):
+        try:
+            # Intentar conectar al FTP
+            ftp = connect_ftp(
+                self.ftp_config["host"],
+                self.ftp_config["user"],
+                self.ftp_config["password"]
+            )
+            ftp.quit()
+            self.connection_success.emit()  # Emitir señal de éxito
+        except Exception as e:
+            self.connection_error.emit(str(e))  # Emitir señal de error
+
 
 class FolderManagerApp(QMainWindow):
     def __init__(self):
@@ -85,14 +109,59 @@ class FolderManagerApp(QMainWindow):
         dialog = FTPConfigDialog(self, self.config)
         if dialog.exec():
             config_path = get_file_path("credentials/ftp_config.json")
-            print(f"json config; {self.config}")
             save_config(config_path, self.config)
+
+            # Extraer datos actualizados del JSON
             self.google_sheet_url = self.config.get("ftp", {}).get("google_sheet_url", "")
-            print(f"google url: {self.google_sheet_url}")
             self.ftp_config = self.config.get("ftp", {})
-            QMessageBox.information(self, "Configuración Guardada", "La configuración ha sido guardada correctamente.")
-            if bool(self.google_sheet_url) and all(self.ftp_config.values()):
-                self.timer.start(30000)  # Inicia el análisis automático cada 10 segundos
+
+            # Validar configuración del FTP
+            if not all([self.ftp_config.get("host"), self.ftp_config.get("user"), self.ftp_config.get("password")]):
+                QMessageBox.warning(self, "Error", "Faltan datos de configuración del servidor FTP.")
+                return
+
+            # Mostrar estado de conexión
+            connecting_msg = QMessageBox(self)
+            connecting_msg.setWindowTitle("Conexión al FTP")
+            connecting_msg.setText("Conectándose al servidor FTP. Por favor, espere...")
+            connecting_msg.setIcon(QMessageBox.Icon.Information)
+            connecting_msg.setStandardButtons(QMessageBox.StandardButton.NoButton)
+            connecting_msg.show()
+
+            # Crear hilo para la conexión FTP
+            self.ftp_thread = FTPConnectionThread(self.ftp_config)
+
+            # Conectar señales del hilo
+            self.ftp_thread.connection_success.connect(lambda: self.handle_ftp_success(connecting_msg))
+            self.ftp_thread.connection_error.connect(lambda error: self.handle_ftp_error(connecting_msg, error))
+
+            # Iniciar el hilo
+            self.ftp_thread.start()
+
+    def handle_ftp_success(self, connecting_msg):
+        """Maneja la conexión exitosa al FTP."""
+        connecting_msg.close()
+        QMessageBox.information(self, "Conexión Exitosa", "Conexión al servidor FTP establecida correctamente.")
+
+        # Limpiar las tablas
+        self.available_table.setRowCount(0)
+        self.used_table.setRowCount(0)
+
+        # Cargar datos de la planilla
+        self.sheet_data = load_excel_data(self.google_sheet_url, self.credential_path)
+        if self.sheet_data is not None:
+            self.update_tabs()
+
+        # Iniciar análisis automático de carpetas cada 30 segundos
+        if self.google_sheet_url:
+            self.timer.start(30000)
+            self.analyze_folders()
+
+    def handle_ftp_error(self, connecting_msg, error):
+        """Maneja errores de conexión al FTP."""
+        connecting_msg.close()
+        QMessageBox.critical(self, "Error de Conexión", f"No se pudo conectar al servidor FTP:\n{error}")
+        self.timer.stop()
 
     
     def analyze_folders(self):
