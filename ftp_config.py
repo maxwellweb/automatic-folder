@@ -34,6 +34,19 @@ def save_config(file_path, config):
         file_path (str): Ruta al archivo JSON.
         config (dict): Configuración que se guardará.
     """
+    
+     # Cargar la configuración existente
+    if os.path.exists(file_path):
+        with open(file_path, "r") as file:
+            existing_config = json.load(file)
+    else:
+        existing_config = {"ftp": {}}
+
+    # Actualizar solo las claves de "ftp" sin duplicar ni anidar
+    if "ftp" in config:
+        for key, value in config["ftp"].items():
+            existing_config["ftp"][key] = value
+            
     # Asegurarse de que el directorio exista
     directory = os.path.dirname(file_path)
     if not os.path.exists(directory):
@@ -41,4 +54,4 @@ def save_config(file_path, config):
 
     # Guardar el archivo JSON
     with open(file_path, "w") as file:
-        json.dump(config, file, indent=4)
+        json.dump(existing_config, file, indent=4)

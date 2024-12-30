@@ -9,7 +9,6 @@ from config.settings import *
 from config.utils import *
 from ftp_config import load_config, save_config
 from data.google_sheets import update_row_in_google_sheet, load_excel_data
-from data.folder_analysis import connect_ftp, verificar_carpetas_ftp, close_ftp_connection
 from workers.download import DownloadWorker
 from workers.analyst_folder import AnalyzeWorker
 
@@ -54,6 +53,7 @@ class FolderManagerApp(QMainWindow):
         self.tab_widget.addTab(self.used_tab, "Carpetas en Uso")
         self.used_layout = QVBoxLayout(self.used_tab)
         self.used_table = QTableWidget()
+        self.used_table.setSortingEnabled(True)
         self.used_layout.addWidget(self.used_table)
 
         self.progress_bar = QProgressBar()
@@ -85,12 +85,16 @@ class FolderManagerApp(QMainWindow):
         dialog = FTPConfigDialog(self, self.config)
         if dialog.exec():
             config_path = get_file_path("credentials/ftp_config.json")
+            print(f"json config; {self.config}")
             save_config(config_path, self.config)
-            self.google_sheet_url = self.config.get("google_sheet_url")
+            self.google_sheet_url = self.config.get("ftp", {}).get("google_sheet_url", "")
+            print(f"google url: {self.google_sheet_url}")
+            self.ftp_config = self.config.get("ftp", {})
             QMessageBox.information(self, "Configuración Guardada", "La configuración ha sido guardada correctamente.")
             if bool(self.google_sheet_url) and all(self.ftp_config.values()):
                 self.timer.start(30000)  # Inicia el análisis automático cada 10 segundos
 
+    
     def analyze_folders(self):
         """Analiza las carpetas en el servidor FTP automáticamente."""
         self.worker = AnalyzeWorker(
@@ -127,7 +131,10 @@ class FolderManagerApp(QMainWindow):
                 folder,
                 self.sheet_data.loc[self.sheet_data["Carpeta"] == folder, "Editor"].values[0]
                 if len(self.sheet_data.loc[self.sheet_data["Carpeta"] == folder, "Editor"].values) > 0
-                else "Sin Editor"
+                else "Sin Editor",
+                self.sheet_data.loc[self.sheet_data["Carpeta"] == folder, "Fecha de descarga"].values[0]
+                if len(self.sheet_data.loc[self.sheet_data["Carpeta"] == folder, "Fecha de descarga"].values) > 0
+                else "No descargada"
             )
             for folder, state in self.folder_states.items() if state == "usada"
         ]
@@ -145,14 +152,17 @@ class FolderManagerApp(QMainWindow):
         self.available_table.resizeColumnsToContents()
 
         self.used_table.setRowCount(len(used))
-        self.used_table.setColumnCount(2)
-        self.used_table.setHorizontalHeaderLabels(["Carpeta", "Editor"])
-        for row, (folder, editor) in enumerate(used):
+        self.used_table.setColumnCount(3)
+        self.used_table.setHorizontalHeaderLabels(["Carpeta", "Editor", "Fecha de Descarga"])
+        for row, (folder, editor, fecha) in enumerate(used):
             if folder:
                 self.used_table.setItem(row, 0, QTableWidgetItem(folder))
                 
             if editor:
                 self.used_table.setItem(row, 1, QTableWidgetItem(editor))
+            
+            if fecha:
+                self.used_table.setItem(row, 2, QTableWidgetItem(fecha))
 
         self.used_table.resizeColumnsToContents()
     def download_and_update(self):
@@ -255,7 +265,7 @@ class FolderManagerApp(QMainWindow):
         )
 
         # Marcar como usada
-        self.folder_states[selected_folder] = "usada"
+        self.folder_states[selected_folder] = "descargada"
         self.update_tabs()
 
         self.progress_bar.setValue(0)

@@ -7,7 +7,7 @@ class FTPConfigDialog(QDialog):
         self.setWindowTitle("Configuración de FTP y Google Sheets")
         self.setGeometry(200, 200, 400, 350)
 
-        self.config = config
+        self.config = config["ftp"]
 
         # Layout principal
         layout = QVBoxLayout()
@@ -54,10 +54,10 @@ class FTPConfigDialog(QDialog):
         if not all([host, user, password, base_path, sheet_url]):
             QMessageBox.warning(self, "Error", "Todos los campos son obligatorios.")
             return
-
         self.config["host"] = host
         self.config["user"] = user
         self.config["password"] = password
         self.config["base_path"] = base_path
         self.config["google_sheet_url"] = sheet_url
+ 
         self.accept()

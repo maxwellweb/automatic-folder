@@ -14,7 +14,6 @@ def connect_ftp(host, username, password, timeout=30):
         ftp.connect(host, timeout=timeout)
         ftp.login(user=username, passwd=password)
         ftp.set_pasv(True)
-        print("Conexión FTP establecida.")
         return ftp
     except error_perm as e:
         raise ConnectionError(f"Error al conectar al servidor FTP: {e}")
