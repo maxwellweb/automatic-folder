@@ -1,6 +1,6 @@
 import sys
 import os
-from PyQt6.QtCore import QThread
+from PyQt6.QtCore import QThread, QTimer
 from PyQt6.QtWidgets import (
     QMainWindow, QVBoxLayout, QPushButton, QLabel, QFileDialog, QWidget, QMessageBox, QTableWidget, QTableWidgetItem, QInputDialog, QProgressBar, QTabWidget
 )
@@ -8,9 +8,10 @@ from ui.ftp_dialog import FTPConfigDialog
 from config.settings import *
 from config.utils import *
 from ftp_config import load_config, save_config
-from data.google_sheets import load_excel_data, append_row_to_google_sheet
+from data.google_sheets import update_row_in_google_sheet, load_excel_data
 from data.folder_analysis import connect_ftp, verificar_carpetas_ftp, close_ftp_connection
-from download_worker import DownloadWorker
+from workers.download import DownloadWorker
+from workers.analyst_folder import AnalyzeWorker
 
 class FolderManagerApp(QMainWindow):
     def __init__(self):
@@ -31,11 +32,6 @@ class FolderManagerApp(QMainWindow):
         self.edit_ftp_btn = QPushButton("Configurar FTP y Google Sheets")
         self.edit_ftp_btn.clicked.connect(self.open_config_dialog)
         self.layout.addWidget(self.edit_ftp_btn)
-
-        self.analyze_btn = QPushButton("Analizar Carpetas en FTP")
-        self.analyze_btn.clicked.connect(self.analyze_folders)
-        self.analyze_btn.setEnabled(False)
-        self.layout.addWidget(self.analyze_btn)
 
         self.select_path_btn = QPushButton("Seleccionar Carpeta de Descarga")
         self.select_path_btn.clicked.connect(self.select_download_path)
@@ -63,7 +59,7 @@ class FolderManagerApp(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         self.layout.addWidget(self.progress_bar)
-        
+
         self.progress_label = QLabel("Descargando: ")
         self.layout.addWidget(self.progress_label)
 
@@ -79,6 +75,10 @@ class FolderManagerApp(QMainWindow):
         self.google_sheet_url = self.config.get("google_sheet_url", None)
         self.ftp_config = self.config.get("ftp", {})
         self.download_path = os.path.expanduser("~/Downloads")
+        self.folder_states = {}  # Diccionario para gestionar el estado de las carpetas
+        self.sheet_data = None  # Inicializa sheet_data
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.analyze_folders)
 
     def open_config_dialog(self):
         """Abre el formulario para configurar credenciales FTP y Google Sheets."""
@@ -88,71 +88,106 @@ class FolderManagerApp(QMainWindow):
             save_config(config_path, self.config)
             self.google_sheet_url = self.config.get("google_sheet_url")
             QMessageBox.information(self, "Configuración Guardada", "La configuración ha sido guardada correctamente.")
-            self.analyze_btn.setEnabled(bool(self.google_sheet_url))
-
-    def update_tabs(self, used, available):
-        """Actualiza las pestañas con carpetas disponibles y usadas."""
-        def fill_table(table, data, headers):
-            table.setRowCount(len(data))
-            table.setColumnCount(len(headers))
-            table.setHorizontalHeaderLabels(headers)
-            for row, items in enumerate(data):
-                for col, item in enumerate(items):
-                    table.setItem(row, col, QTableWidgetItem(item))
-            table.resizeColumnsToContents()
-
-        fill_table(self.available_table, [(folder,) for folder in available], ["Carpetas Disponibles"])
-        fill_table(self.used_table, used, ["Carpeta", "Editor"])
+            if bool(self.google_sheet_url) and all(self.ftp_config.values()):
+                self.timer.start(30000)  # Inicia el análisis automático cada 10 segundos
 
     def analyze_folders(self):
-        """Analiza las carpetas en el servidor FTP."""
-        try:
-            self.validate_ftp_and_sheet_config()
+        """Analiza las carpetas en el servidor FTP automáticamente."""
+        self.worker = AnalyzeWorker(
+            self.ftp_config,
+            self.google_sheet_url,
+            self.credential_path,
+            self.folder_states
+        )
+        
+        # conectar señales del trabajador con el hilo principal
+        self.worker.message.connect(self.show_message)
+        self.worker.update_tabs_signal.connect(self.hander_update_tabs)
+        
+        # Iniciar el hilo
+        self.worker.start()
 
-            ftp = connect_ftp(self.ftp_config["host"], self.ftp_config["user"], self.ftp_config["password"])
-            self.sheet_data = load_excel_data(self.google_sheet_url, self.credential_path)
+    def show_message(self, title, content):
+        QMessageBox.information(self, title, content)
+    
+    def hander_update_tabs(self, update_folder_states, sheet_data):
+        self.sheet_data = sheet_data
+        self.folder_states = update_folder_states
+        self.update_tabs()
 
-            used, available = verificar_carpetas_ftp(ftp, self.ftp_config["base_path"], self.sheet_data, "Carpeta")
-            close_ftp_connection(ftp)
-
-            used_with_editor = [
-                (folder, self.sheet_data.loc[self.sheet_data["Carpeta"] == folder, "Editor"].values[0]
+    def update_tabs(self):
+        """Actualiza las pestañas con carpetas disponibles y usadas."""
+        if self.sheet_data is None:
+            QMessageBox.warning(self, "Sin Datos", "No se han cargado datos de Google Sheets.")
+            return
+        
+        available = [folder for folder, state in self.folder_states.items() if state == "disponible"]
+        used = [
+            (
+                folder,
+                self.sheet_data.loc[self.sheet_data["Carpeta"] == folder, "Editor"].values[0]
                 if len(self.sheet_data.loc[self.sheet_data["Carpeta"] == folder, "Editor"].values) > 0
-                else "Sin Editor")
-                for folder in used
-            ]
+                else "Sin Editor"
+            )
+            for folder, state in self.folder_states.items() if state == "usada"
+        ]
 
-            self.update_tabs(used_with_editor, available)
-            QMessageBox.information(self, "Análisis Completo", "Análisis de carpetas completado.")
+        self.available_table.setRowCount(len(available))
+        self.available_table.setColumnCount(2)
+        self.available_table.setHorizontalHeaderLabels(["Carpeta", "Estado"])
+        for row, folder in enumerate(available):
+            if folder:
+                self.available_table.setItem(row, 0, QTableWidgetItem(folder))
+            estado = self.folder_states.get(folder, "Desconocido")
+            if estado:
+                self.available_table.setItem(row, 1, QTableWidgetItem(estado))
 
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al analizar carpetas: {e}")
+        self.available_table.resizeColumnsToContents()
 
-    def validate_ftp_and_sheet_config(self):
-        """Valida la configuración del FTP y Google Sheets."""
-        required_keys = ["host", "user", "password", "base_path"]
-        for key in required_keys:
-            if key not in self.ftp_config or not self.ftp_config[key]:
-                raise Exception(f"Falta la clave de configuración: {key}")
+        self.used_table.setRowCount(len(used))
+        self.used_table.setColumnCount(2)
+        self.used_table.setHorizontalHeaderLabels(["Carpeta", "Editor"])
+        for row, (folder, editor) in enumerate(used):
+            if folder:
+                self.used_table.setItem(row, 0, QTableWidgetItem(folder))
+                
+            if editor:
+                self.used_table.setItem(row, 1, QTableWidgetItem(editor))
 
-        if not self.google_sheet_url:
-            raise Exception("URL de Google Sheets no configurada.")
-
+        self.used_table.resizeColumnsToContents()
     def download_and_update(self):
         """Descarga un directorio y actualiza Google Sheets."""
-        if not self.google_sheet_url:
-            QMessageBox.warning(self, "Error", "Por favor, carga los datos de Google Sheets primero.")
-            return
-
         selected_row = self.available_table.currentRow()
         if selected_row == -1:
-            QMessageBox.warning(self, "Error", "Por favor, selecciona una carpeta disponible.")
+            QMessageBox.warning(self, "Error", "Por favor, selecciona una carpeta disponible para descargar.")
             return
-
+        
         selected_folder = self.available_table.item(selected_row, 0).text()
+        
+        sheet_data = load_excel_data(self.google_sheet_url, self.credential_path)
+        folder_row = sheet_data[sheet_data["Carpeta"] == selected_folder]
+        if not folder_row.empty:
+            current_state = folder_row["Estado"].values[0]
+            if current_state != "disponible":
+                QMessageBox.warning(self, "Error", f"La carpeta '{selected_folder}' ya está siendo descargada por otro editor.")
+                return
+
+        # Marcar la carpeta como "en proceso"
+        self.folder_states[selected_folder] = "en proceso"
+        self.update_tabs()
+        
+        update_row_in_google_sheet(
+            self.google_sheet_url,
+            self.credential_path,
+            selected_folder,
+            ["", "", "en proceso"]
+        )
+
         editor, ok = QInputDialog.getText(self, "Nombre del Editor", "Introduce tu nombre:")
         if not ok or not editor.strip():
             QMessageBox.warning(self, "Error", "El nombre del editor es obligatorio.")
+            self.folder_states[selected_folder] = "disponible"  # Liberar el bloqueo si no se confirma
+            self.update_tabs()
             return
         
         base_path = self.ftp_config["base_path"]
@@ -165,12 +200,12 @@ class FolderManagerApp(QMainWindow):
         self.worker.moveToThread(self.thread)
 
         self.worker.progress.connect(self.update_progress)
-        self.worker.finished.connect(lambda msg: self.download_finished(msg, selected_row, selected_folder, editor))
+        self.worker.finished.connect(lambda msg: self.download_finished(msg, selected_folder, editor))
         self.worker.error.connect(self.handle_error)
-
-        self.thread.started.connect(self.worker.run)
         self.thread.finished.connect(self.thread.deleteLater)
 
+        self.thread.started.connect(self.worker.run)
+        
         self.progress_bar.setValue(0)
         self.progress_label.setText("Descargando: ")
         self.thread.start()
@@ -182,25 +217,46 @@ class FolderManagerApp(QMainWindow):
         if filename:
             self.progress_label.setText(f"Descargando: {filename} ({percentage}%)")
         else:
-            self.progress_label.setText(f"Progreso: ({percentage}%)")
-            
+            self.progress_label.setText(f"Progreso: {percentage}%")
+
     def handle_error(self, error_message):
         QMessageBox.critical(self, "Error", f"Error durante la descarga: {error_message}")
+        for folder, state in self.folder_states.items():
+            if state == "en proceso":
+                self.folder_states[folder] = "disponible"
+        self.update_tabs()
+        self.progress_label.setText("Error durante la descarga.")
         self.progress_bar.setValue(0)
-        self.thread.quit()
+       
+        if self.thread.isRunning():
+            self.thread.quit()
+            self.thread.wait()
 
-    def download_finished(self, message, selected_row, selected_folder, editor):
+    def download_finished(self, message, selected_folder, editor):
+        from datetime import datetime  # Importar el módulo datetime
         QMessageBox.information(self, "Descarga completa", message)
-        append_row_to_google_sheet(self.google_sheet_url, self.credential_path, [selected_folder, editor])
+        folder_name = selected_folder
+        update_row_in_google_sheet(
+            self.google_sheet_url,
+            self.credential_path,
+            folder_name,
+            [
+                editor, 
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                "descargada"
+            ]
+        )
 
-        self.available_table.removeRow(selected_row)
-        row_position = self.used_table.rowCount()
-        self.used_table.insertRow(row_position)
-        self.used_table.setItem(row_position, 0, QTableWidgetItem(selected_folder))
-        self.used_table.setItem(row_position, 1, QTableWidgetItem(editor))
+        # Marcar como usada
+        self.folder_states[selected_folder] = "usada"
+        self.update_tabs()
 
         self.progress_bar.setValue(0)
-        self.thread.quit()
+        self.progress_label.setText("Descarga completada.")
+        
+        if self.thread.isRunning():
+            self.thread.quit()
+            self.thread.wait()
 
     def select_download_path(self):
         path = QFileDialog.getExistingDirectory(self, "Seleccionar Carpeta de Descarga", self.download_path)
