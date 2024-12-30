@@ -73,7 +73,7 @@ class FolderManagerApp(QMainWindow):
         self.credential_path = get_file_path("credentials/credentials.json")
         self.config = load_config(config_path)
         self.google_sheet_url = self.config.get("google_sheet_url", None)
-        self.ftp_config = self.config.get("ftp", {})
+        self.ftp_config = self.config.get({})
         self.download_path = os.path.expanduser("~/Downloads")
         self.folder_states = {}  # Diccionario para gestionar el estado de las carpetas
         self.sheet_data = None  # Inicializa sheet_data
