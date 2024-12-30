@@ -73,7 +73,7 @@ class FolderManagerApp(QMainWindow):
         self.credential_path = get_file_path("credentials/credentials.json")
         self.config = load_config(config_path)
         self.google_sheet_url = self.config.get("google_sheet_url", None)
-        self.ftp_config = self.config.get({})
+        self.ftp_config = self.config.get("ftp",{})
         self.download_path = os.path.expanduser("~/Downloads")
         self.folder_states = {}  # Diccionario para gestionar el estado de las carpetas
         self.sheet_data = None  # Inicializa sheet_data
@@ -170,6 +170,7 @@ class FolderManagerApp(QMainWindow):
             current_state = folder_row["Estado"].values[0]
             if current_state != "disponible":
                 QMessageBox.warning(self, "Error", f"La carpeta '{selected_folder}' ya está siendo descargada por otro editor.")
+                self.folder_states[selected_folder] = "en proceso"
                 return
 
         # Marcar la carpeta como "en proceso"
@@ -188,6 +189,12 @@ class FolderManagerApp(QMainWindow):
             QMessageBox.warning(self, "Error", "El nombre del editor es obligatorio.")
             self.folder_states[selected_folder] = "disponible"  # Liberar el bloqueo si no se confirma
             self.update_tabs()
+            update_row_in_google_sheet(
+                self.google_sheet_url,
+                self.credential_path,
+                selected_folder,
+                ["", "", "disponible"]
+            )
             return
         
         base_path = self.ftp_config["base_path"]
